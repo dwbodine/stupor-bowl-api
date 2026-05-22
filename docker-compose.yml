@@ -1,0 +1,81 @@
+name: stupor-bowl
+services:
+  stuporbowldb:
+    build:
+      context: .
+      dockerfile: Dockerfile.MySql
+    container_name: stuporbowldb
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    environment:
+      PMA_HOST: stuporbowldb
+      PMA_PORT: 3306
+      PMA_AUTH_TYPE: cookie
+    ports:
+      - "8080:80"
+      
+  api:
+    build: .
+    container_name: stuporbowl_api
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: stuporbowldb
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # If you rely on these in settings.py, keep them here (or in .env)
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: 1
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL}
+      ALLOWED_HOSTS: "127.0.0.1,localhost"
+    ports:
+      - "8000:8000"
+    # If entrypoint.sh starts gunicorn (as you showed earlier), use it:
+    entrypoint: ["sh", "-lc", "chmod +x /app/entrypoint.sh && /app/entrypoint.sh"]
+    restart: unless-stopped
+
+  # One-shot migration runner: starts, migrates, exits
+  migrate:
+    build: .
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: stuporbowldb
+      DB_NAME: stuporbowldb
+      DB_USER: root
+      DB_PASSWORD: ${DB_ROOT_PASSWORD}
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL}
+    entrypoint: ["sh", "-lc", "chmod +x /app/entrypoint.migrate.sh && /app/entrypoint.migrate.sh"]
+    restart: "no"
+    profiles: ["jobs"]
+
+volumes:
+  db_data:

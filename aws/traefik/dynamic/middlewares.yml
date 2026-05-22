@@ -1,0 +1,9 @@
+http:
+  middlewares:
+    secureHeaders:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        sslRedirect: true

@@ -1,0 +1,214 @@
+services:
+  traefik:
+    image: traefik:v3.6.7
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      # Providers
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --providers.docker.network=proxy
+
+      # EntryPoints
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+
+      # Logging
+      - --log.level=INFO
+
+      # Dashboard
+      - --api.dashboard=true
+      - --api.insecure=false
+
+      # ACME / Let's Encrypt (staging for now)
+      - --certificatesresolvers.le.acme.email=${LE_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/acme.json:/letsencrypt/acme.json
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+
+    networks:
+      - proxy
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      # -------- Middlewares --------
+      - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_BASIC_AUTH}
+      # Force HTTP -> HTTPS
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
+
+      # HTTP -> HTTPS catchall
+      - traefik.http.routers.http-catchall.rule=HostRegexp(`{any:.+}`)
+      - traefik.http.routers.http-catchall.entrypoints=web
+      - traefik.http.routers.http-catchall.middlewares=redirect-to-https
+      - traefik.http.routers.http-catchall.service=noop@internal
+
+      # -------- Traefik dashboard --------
+      - traefik.http.routers.traefik.rule=Host(`${TRAEFIK_DOMAIN}`)
+      - traefik.http.routers.traefik.entrypoints=websecure
+      - traefik.http.routers.traefik.tls=true
+      - traefik.http.routers.traefik.tls.certresolver=le
+      - traefik.http.routers.traefik.middlewares=auth,secureHeaders@file
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.root-redirect-http.rule=Host(`${ROOT_DOMAIN}`)
+      - traefik.http.routers.root-redirect-http.entrypoints=web
+      - traefik.http.routers.root-redirect-http.middlewares=redirect-www
+      - traefik.http.routers.root-redirect-http.service=noop@internal
+
+  stuporbowldb:
+    image: 983458256550.dkr.ecr.us-west-2.amazonaws.com/stuporbowl/stuporbowldb:latest
+    container_name: stuporbowldb
+    restart: unless-stopped
+    mem_limit: 900m
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mariadb-admin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-p${DB_ROOT_PASSWORD}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: stuporbowldb
+      PMA_PORT: 3306
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    networks:
+      - proxy
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.pma.rule=Host(`${PMA_DOMAIN}`)
+      - traefik.http.routers.pma.entrypoints=websecure
+      - traefik.http.routers.pma.tls=true
+      - traefik.http.routers.pma.tls.certresolver=le
+      - traefik.http.routers.pma.middlewares=auth,secureHeaders@file
+      - traefik.http.services.pma.loadbalancer.server.port=80
+
+  api:
+    image: 983458256550.dkr.ecr.us-west-2.amazonaws.com/stuporbowl/stuporbowlapi:latest
+    container_name: api
+    restart: unless-stopped
+    environment:
+      DB_HOST: stuporbowldb
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DJANGO_DEBUG: "0"
+      ALLOWED_HOSTS: "api.stupor-bowl.com"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY}"
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    networks:
+      - proxy
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.api.rule=Host(`${API_DOMAIN}`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls=true
+      - traefik.http.routers.api.tls.certresolver=le
+      - traefik.http.routers.api.middlewares=secureHeaders@file
+      - traefik.http.services.api.loadbalancer.server.port=8000
+
+  stupor-bowl-www:
+    image: 983458256550.dkr.ecr.us-west-2.amazonaws.com/stuporbowl/stuporbowlwww:latest
+    container_name: stupor-bowl-www
+    restart: unless-stopped
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+
+      # www.stupor-bowl.com (PRIMARY FRONTEND)
+      - traefik.http.routers.frontend.rule=Host(`${FRONTEND_DOMAIN}`)
+      - traefik.http.routers.frontend.entrypoints=websecure
+      - traefik.http.routers.frontend.tls=true
+      - traefik.http.routers.frontend.tls.certresolver=le
+      - traefik.http.routers.frontend.middlewares=secureHeaders@file
+      - traefik.http.services.frontend.loadbalancer.server.port=80
+
+      # Optional: redirect naked domain → www
+      - traefik.http.routers.root-redirect.rule=Host(`${ROOT_DOMAIN}`)
+      - traefik.http.routers.root-redirect.entrypoints=websecure
+      - traefik.http.routers.root-redirect.tls=true
+      - traefik.http.routers.root-redirect.tls.certresolver=le
+      - traefik.http.routers.root-redirect.middlewares=redirect-www
+
+      - traefik.http.middlewares.redirect-www.redirectregex.regex=^https?://stupor-bowl\.com/(.*)
+      - traefik.http.middlewares.redirect-www.redirectregex.replacement=https://www.stupor-bowl.com/$$1
+      - traefik.http.middlewares.redirect-www.redirectregex.permanent=true
+
+  migrate:
+    image: 983458256550.dkr.ecr.us-west-2.amazonaws.com/stuporbowl/stuporbowlapi:latest
+    container_name: migrate
+    depends_on:
+      stuporbowldb:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DB_HOST: stuporbowldb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # used by your entrypoint.migrate.sh (or similar logic)
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL}
+      DJANGO_DEBUG: "0"
+      ALLOWED_HOSTS: "api.stupor-bowl.com,www.stupor-bowl.com,stupor-bowl.com"
+    networks:
+      - proxy
+      - internal
+    entrypoint: ["sh", "-lc", "chmod +x /app/entrypoint.migrate.sh && /app/entrypoint.migrate.sh"]
+    restart: "no"
+    profiles: ["jobs"]
+
+volumes:
+  db_data:
+
+networks:
+  proxy:
+    name: proxy
+  internal:
+    name: internal
+    internal: true

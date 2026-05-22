@@ -1,0 +1,7 @@
+FROM mariadb:11.4
+
+# Optional: set sensible defaults for modern apps
+# (you can also do this via a mounted my.cnf instead)
+COPY ./docker/mysql/my.cnf /etc/mysql/conf.d/my.cnf
+
+EXPOSE 3306

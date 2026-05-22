@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+Dockerfile
+Makefile
+public-endpoint.json
+containers.json
+.dockerignore
+.git
+.gitignore
+__pycache__/
+aws
+backup
+.vscode
+.mypy_cache

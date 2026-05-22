@@ -1,0 +1,52 @@
+[MASTER]
+# Django plugin removes a lot of ORM false-positives
+load-plugins=pylint_django
+
+# Files/directories to ignore (adjust if needed)
+ignore=.venv,venv,__pycache__
+ignore-patterns=
+    ^core[\\/].*,
+    ^.*/migrations/.*,
+    ^.*\\migrations\\.*,
+    manage.py
+
+# If you keep migrations checked by pylint, remove "migrations" above and
+# instead add per-file ignores in [MAIN] -> ignore-patterns.
+
+[DJANGO]
+django-settings-module=config.settings
+
+[MAIN]
+# Reasonable defaults; tweak to taste
+jobs=0
+py-version=3.13
+
+[MESSAGES CONTROL]
+disable=
+    # Django/ORM dynamic attributes (objects, *_id, etc.)
+    no-member,
+    # Very common in Django models/admin classes
+    too-few-public-methods,
+    # Often noisy in Django (settings-based and plugin-based imports)
+    import-error,
+    # Optional: can be noisy with Django patterns and descriptors
+    attribute-defined-outside-init,
+    # Optional: if you don’t care about docstrings everywhere
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    import-outside-toplevel
+
+[FORMAT]
+max-line-length=100
+
+[DESIGN]
+# Django admin/model classes can have many fields; relax a bit
+max-args=8
+max-attributes=12
+max-locals=20
+max-branches=15
+max-statements=60
+
+[REPORTS]
+score=no
